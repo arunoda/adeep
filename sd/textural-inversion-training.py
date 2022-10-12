@@ -32,7 +32,7 @@ images = [Image.open(p).resize((512, 512), resample=Image.BICUBIC).convert("RGB"
 
 what_to_teach = "object"
 placeholder_token = "<iu>"
-initializer_token = "girl"
+initializer_token = "women"
 
 templates = [
     "a photo of a {}",
@@ -168,4 +168,4 @@ def training_function(text_encoder, vae, unet, train_batch_size, gradient_accumu
 
 torch.manual_seed(42)
 training_function(text_encoder, vae, unet, train_batch_size=1, gradient_accumulation_steps=4, lr=5e-04,
-      max_train_steps=200, scale_lr=True, output_dir="sd-concept-output")
+      max_train_steps=3000, scale_lr=True, output_dir="sd-concept-output")
