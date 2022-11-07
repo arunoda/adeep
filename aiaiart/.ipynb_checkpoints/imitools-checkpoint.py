@@ -5,6 +5,7 @@ import torch
 from torchvision import transforms
 from matplotlib import pyplot as plt
 import math
+from IPython.display import  display
 
 class ImageDefaults:
     def __init__(self):
@@ -103,8 +104,7 @@ class ImageWrapper:
                         ax[row][col].set_title(f"{i}")
                     else:
                         ax[row][col].axis("off")
-        
-
+                        
 def load(input_data) -> ImageWrapper:
     if isinstance(input_data, str):
         pil_image = Image.open(input_data).convert("RGB")
@@ -127,6 +127,68 @@ def load(input_data) -> ImageWrapper:
             return ImageWrapper(images, "pt")
     
     raise Exception("not implemented!")
+                        
+
+class DynaPlot:
+    def __init__(self, cols=2, figsize=(15, 4)):
+        fig, subplots = plt.subplots(1, cols, figsize=(20, 5))
+        fig.patch.set_facecolor("white")
+        fig.tight_layout()
+        out = display(fig, display_id=True)
+
+        self.cols = cols
+        self.fig = fig
+        self.out = out
+        self.subplots = subplots
+        
+        self.queue = []
+        
+    def plot(self, subplot_id, *args, **kwargs) -> DynaPlot:
+        self.queue.append((
+            "plot", subplot_id, args, kwargs
+        ))
+        return self
+    
+    def title(self, subplot_id, title)-> DynaPlot:
+        self.queue.append((
+            "title", subplot_id, title
+        ))
+        return self
+        
+    def imshow(self, subplot_id, image)-> DynaPlot:
+        self.queue.append((
+            "imshow", subplot_id, image
+        ))
+        return self
+        
+    def update(self):
+        for col in range(self.cols):
+            self.subplots[col].clear()
+        
+        for item in self.queue:
+            if item[0] == "imshow":
+                _, subplot_id, image = item
+                self.subplots[subplot_id].imshow(load(image).pt().detach().cpu()[0].permute(1, 2, 0))
+                self.subplots[subplot_id].axis("off")
+            
+            if item[0] == "plot":
+                _, subplot_id, args, kwargs = item
+                self.subplots[subplot_id].plot(*args, **kwargs)
+                if "label" in kwargs:
+                    self.subplots[subplot_id].legend()
+                
+            if item[0] == "title":
+                _, subplot_id, title = item
+                self.subplots[subplot_id].title.set_text(title)
+                
+        self.queue = []
+        self.out.update(self.fig)
+        
+    def close(self):
+        plt.close()
+    
+def dplot(**kwargs) -> DynaPlot:
+    return DynaPlot(**kwargs)
 
 # class ImiTools:
 #     def __init__(self):
