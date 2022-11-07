@@ -120,6 +120,11 @@ def load(input_data) -> ImageWrapper:
         if isinstance(input_data[0], torch.Tensor):
             images = torch.stack(input_data).squeeze(1)
             return ImageWrapper(images, "pt")
+        
+        if isinstance(input_data[0], ImageWrapper):
+            image_list = list(map(lambda w: w.pt(), input_data))
+            images = torch.stack(image_list).squeeze(1)
+            return ImageWrapper(images, "pt")
     
     raise Exception("not implemented!")
 
