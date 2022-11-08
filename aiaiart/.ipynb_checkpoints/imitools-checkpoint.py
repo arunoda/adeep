@@ -71,7 +71,8 @@ class ImageWrapper:
         if self.image_type == "pt":
             make_pil = transforms.ToPILImage()
             pt_images = self.data.cpu()
-            return [make_pil(i) for i in pt_images]
+            pil_images = [make_pil(i) for i in pt_images]
+            return pil_images[0] if len(pil_images) == 1 else pil_images
     
     def pt(self) -> torch.Tensor:            
         if self.image_type == "pil":
@@ -88,10 +89,11 @@ class ImageWrapper:
         return ImageWrapper(self.data.to(device), "pt")
     
     def cpil(self) -> ImageWrapper:
-        if self.image_type == "pil":
-            return self
-        
-        return ImageWrapper(self.pil(), "pil")
+        images = self.pil()
+        if isinstance(images, Image.Image):
+            images = [images]
+            
+        return ImageWrapper(images, "pil")
     
     def cpt(self) -> ImageWrapper:
         return ImageWrapper(self.pt(), "pt")
@@ -183,11 +185,14 @@ def wrap(input_data) -> ImageWrapper:
         if len(input_data.shape) == 3:
             input_data = input_data.unsqueeze(0)
             
-        return ImageWrapper(input_data, "pt")
+        return ImageWrapper(input_data.detach(), "pt")
+    
+    if isinstance(input_data, Image.Image):
+        return ImageWrapper([input_data], "pil")
     
     if isinstance(input_data, list):
         if isinstance(input_data[0], torch.Tensor):
-            images = torch.stack(input_data).squeeze(1)
+            images = torch.stack(input_data).squeeze(1).detach()
             return ImageWrapper(images, "pt")
         
         if isinstance(input_data[0], Image.Image):
@@ -195,7 +200,7 @@ def wrap(input_data) -> ImageWrapper:
         
         if isinstance(input_data[0], ImageWrapper):
             image_list = list(map(lambda w: w.pt(), input_data))
-            images = torch.stack(image_list).squeeze(1)
+            images = torch.stack(image_list).squeeze(1).detach()
             return ImageWrapper(images, "pt")
     
     raise Exception("not implemented!")                        
