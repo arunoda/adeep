@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 import torch
 from torchvision import transforms
 from matplotlib import pyplot as plt
 import math
-from IPython.display import  display
+from pathlib import Path
+from IPython.display import  display, HTML
+from base64 import b64encode
+import os
 
 class ImageDefaults:
     def __init__(self):
@@ -13,16 +16,40 @@ class ImageDefaults:
         
 defaults = ImageDefaults()
 
+class VideoWrapper:
+    def __init__(self, video_path, video_size):
+        self.video_path = video_path
+        self.video_size = video_size
+        
+    def path(self):
+        return self.video_path
+    
+    def show(self):
+        mp4 = open(self.video_path, 'rb').read()
+        data_url = "data:video/mp4;base64," + b64encode(mp4).decode()
+        
+        width, height = self.video_size
+        
+        return HTML(f"""
+        <video width={width} height={height} controls>
+              <source src="%s" type="video/mp4">
+        </video>
+        """ % data_url)
+
 class ImageWrapper:
     def __init__(self, data, image_type):
         self.data = data
         self.image_type = image_type
         
     def resize(self, size=(256, 256)) -> ImageWrapper:
+        if self.image_type != "pil":
+            raise Exception("resize() only applied for pil images")
+            
         if isinstance(size, int):
             size = (size, size)
-        
-        return ImageWrapper(self.data.resize(size), "pil")
+            
+        new_images = [im.resize(size) for im in self.data]
+        return ImageWrapper(new_images, "pil")
     
     def normalize(self) -> ImageWrapper:
         if self.image_type != "pt":
@@ -39,15 +66,17 @@ class ImageWrapper:
         
     def pil(self) -> Image:
         if self.image_type == "pil":
-            return self.data
+            return self.data[0] if len(self.data) == 1 else self.data
         
         if self.image_type == "pt":
-            return transforms.ToPILImage()(self.data.squeeze(0).cpu())
+            make_pil = transforms.ToPILImage()
+            pt_images = self.data.cpu()
+            return [make_pil(i) for i in pt_images]
     
     def pt(self) -> torch.Tensor:            
         if self.image_type == "pil":
-            pt_image = transforms.ToTensor()(self.data)
-            return pt_image.unsqueeze(0).to(defaults.device)
+            pt_images = [transforms.ToTensor()(im) for im in self.data]
+            return torch.stack(pt_images).to(defaults.device)
         
         if self.image_type == "pt":
             return self.data
@@ -59,21 +88,25 @@ class ImageWrapper:
         return ImageWrapper(self.data.to(device), "pt")
     
     def cpil(self) -> ImageWrapper:
+        if self.image_type == "pil":
+            return self
+        
         return ImageWrapper(self.pil(), "pil")
     
     def cpt(self) -> ImageWrapper:
         return ImageWrapper(self.pt(), "pt")
     
-    def show(self, cmap=None, figsize=None, cols=6, max_count=36):        
-        if self.image_type != "pt":
-            raise Exception("show() only applied for pytorch tensors")
-        
+    def show(self, cmap=None, figsize=None, cols=6, max_count=36, scale=2.5, captions=True):        
         if len(self.data) == 1:
             plt.axis("off")
-            plt.imshow(self.data[0].permute(1, 2, 0).cpu(), cmap=cmap)
+            if self.image_type == "pil":
+                plt.imshow(self.data[0], cmap=cmap)
+            else:
+                plt.imshow(self.data[0].permute(1, 2, 0).cpu(), cmap=cmap)
+                
             return
         
-        images = self.data.cpu()
+        images = self.data.cpu() if self.image_type == "pt" else self.data
         image_count = len(self.data)
         
         if image_count > max_count:
@@ -86,29 +119,65 @@ class ImageWrapper:
         rows = math.ceil(image_count / cols)
         
         if figsize == None:
-            figsize = figsize=(cols*2.5, rows*2.5)
+            figsize = figsize=(cols*scale, rows*scale)
             
         _, ax = plt.subplots(rows, cols, figsize=figsize)
         if (rows == 1):
             for i in range(image_count):
-                ax[i].imshow(images[i].permute(1, 2, 0))
-                ax[i].axis("off")   
-                ax[i].set_title(f"{i}")
+                image = images[i] if self.image_type == "pil" else images[i].permute(1, 2, 0)
+                ax[i].imshow(image)
+                ax[i].axis("off")
+                if captions: ax[i].set_title(f"{i}")
         else:
             for row in range(rows):
                 for col in range(cols):
                     i = row * cols + col
                     if i < image_count:
-                        ax[row][col].imshow(images[i].permute(1, 2, 0))
+                        image = images[i] if self.image_type == "pil" else images[i].permute(1, 2, 0)
+                        ax[row][col].imshow(image)
                         ax[row][col].axis("off")
-                        ax[row][col].set_title(f"{i}")
+                        if captions: ax[row][col].set_title(f"{i}")
                     else:
                         ax[row][col].axis("off")
                         
-def load(input_data) -> ImageWrapper:
-    if isinstance(input_data, str):
-        pil_image = Image.open(input_data).convert("RGB")
-        return ImageWrapper(pil_image, "pil")
+    def to_dir(self, output_dir, prefix="image"):
+        if self.image_type != "pil":
+            raise Exception("to_dir() only applied for pil images")
+            
+        dir_path = Path(output_dir)
+        dir_path.mkdir(exist_ok=True, parents=True)
+        
+        images = self.data
+        
+        for i in range(len(images)):
+            path = Path(output_dir)/f"{prefix}_{i:04}.png"
+            images[i].save(path)
+            
+    def to_video(self, out_path=None, frame_rate=12):
+        if self.image_type != "pil":
+            raise Exception("to_video() only applied for pil images")
+            
+        id = int(torch.rand(1)[0].item() * 9999999)
+        image_dir = Path(f'/tmp/{id}/images')
+        image_dir.mkdir(exist_ok=True, parents=True)
+
+        if out_path == None:
+            out_path = f"/tmp/{id}/video.mp4"
+
+        video_path = Path(out_path)
+        video_size = self.data[0].size
+        images_selector = image_dir/"image_%04d.png"
+        
+        self.to_dir(image_dir, prefix="image")
+
+        command = f"ffmpeg -v 0 -y -f image2 -framerate {frame_rate} -i {images_selector} -c:v h264_nvenc -preset slow -qp 18 -pix_fmt yuv420p {video_path}"
+        os.system(command)
+    
+        return VideoWrapper(video_path, video_size)
+
+def wrap(input_data) -> ImageWrapper:
+    if isinstance(input_data, ImageWrapper):
+        return input_data
     
     if isinstance(input_data, torch.Tensor):
         if len(input_data.shape) == 3:
@@ -121,12 +190,31 @@ def load(input_data) -> ImageWrapper:
             images = torch.stack(input_data).squeeze(1)
             return ImageWrapper(images, "pt")
         
+        if isinstance(input_data[0], Image.Image):
+            return ImageWrapper(input_data, "pil")
+        
         if isinstance(input_data[0], ImageWrapper):
             image_list = list(map(lambda w: w.pt(), input_data))
             images = torch.stack(image_list).squeeze(1)
             return ImageWrapper(images, "pt")
     
-    raise Exception("not implemented!")
+    raise Exception("not implemented!")                        
+                        
+def from_dir(dir_path) -> ImageWrapper:
+    file_list = [f for f in Path(dir_path).iterdir() if not f.is_dir()]
+    image_list = []
+
+    for f in file_list:
+        try:
+            image_list.append(Image.open(f).convert("RGB"))
+        except UnidentifiedImageError:
+            None
+            
+    return ImageWrapper(image_list, "pil")
+
+def from_path(input_data) -> ImageWrapper:
+    pil_image = Image.open(input_data).convert("RGB")
+    return ImageWrapper([pil_image], "pil")
                         
 
 class DynaPlot:
@@ -163,13 +251,20 @@ class DynaPlot:
         
     def update(self):
         for col in range(self.cols):
-            self.subplots[col].clear()
+            if self.cols == 1:
+                self.subplots.clear()
+            else:
+                self.subplots[col].clear()
         
         for item in self.queue:
             if item[0] == "imshow":
                 _, subplot_id, image = item
-                self.subplots[subplot_id].imshow(load(image).pt().detach().cpu()[0].permute(1, 2, 0))
-                self.subplots[subplot_id].axis("off")
+                if self.cols == 1:
+                    self.subplots.imshow(wrap(image).pt().detach().cpu()[0].permute(1, 2, 0))
+                    self.subplots.axis("off")
+                else:
+                    self.subplots[subplot_id].imshow(wrap(image).pt().detach().cpu()[0].permute(1, 2, 0))
+                    self.subplots[subplot_id].axis("off")
             
             if item[0] == "plot":
                 _, subplot_id, args, kwargs = item
@@ -185,6 +280,7 @@ class DynaPlot:
         self.out.update(self.fig)
         
     def close(self):
+        self.update()
         plt.close()
     
 def dplot(**kwargs) -> DynaPlot:
@@ -194,8 +290,17 @@ def dplot(**kwargs) -> DynaPlot:
 #     def __init__(self):
 #         self.defaults = defaults
         
-#     def load(self, path) -> ImageWrapper:
-#         return load(path)
+#     def wrap(self, path) -> ImageWrapper:
+#         return wrap(path)
+                        
+#     def from_path(self, path) -> ImageWrapper:
+#         return from_path(path)
+    
+#     def from_dir(self, path) -> ImageWrapper:
+#         return from_dir(path)
+    
+#     def dplot(self, **kwargs) -> DynaPlot:
+#         return dplot(**kwargs)
     
 # I = ImiTools()
 # I.defaults.device = device
