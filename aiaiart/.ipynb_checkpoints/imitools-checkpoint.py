@@ -280,7 +280,6 @@ class DynaPlot:
         self.out.update(self.fig)
         
     def close(self):
-        self.update()
         plt.close()
     
 def dplot(**kwargs) -> DynaPlot:
