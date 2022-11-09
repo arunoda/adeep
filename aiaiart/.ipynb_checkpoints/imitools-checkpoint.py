@@ -9,6 +9,7 @@ from pathlib import Path
 from IPython.display import  display, HTML
 from base64 import b64encode
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 class ImageDefaults:
     def __init__(self):
@@ -142,7 +143,7 @@ class ImageWrapper:
                     else:
                         ax[row][col].axis("off")
                         
-    def to_dir(self, output_dir, prefix="image"):
+    def to_dir(self, output_dir, prefix="image", max_workers=min(10, os.cpu_count())):
         if self.image_type != "pil":
             raise Exception("to_dir() only applied for pil images")
             
@@ -150,10 +151,16 @@ class ImageWrapper:
         dir_path.mkdir(exist_ok=True, parents=True)
         
         images = self.data
-        
-        for i in range(len(images)):
-            path = Path(output_dir)/f"{prefix}_{i:04}.png"
-            images[i].save(path)
+
+        def save_image(i):
+            try:
+                path = Path(output_dir)/f"{prefix}_{i:04}.png"
+                images[i].save(path)
+            except Exception as e:
+                print("image saving error:", e)
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            return executor.map(save_image, range(len(images)), timeout=60)
             
     def to_video(self, out_path=None, frame_rate=12):
         if self.image_type != "pil":
